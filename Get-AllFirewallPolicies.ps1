@@ -148,6 +148,8 @@ foreach ($policyInfo in $allFirewallPolicies) {
                     }
                     $ruleCollections += $collectionInfo
                     
+                    Write-Host "      Found collection: $($ruleCollection.Name) - Type: $($ruleCollection.RuleCollectionType) - Rules: $($ruleCollection.Rules.Count)" -ForegroundColor Gray
+                    
                     # Process rules based on collection type
                     switch ($ruleCollection.RuleCollectionType) {
                         "FirewallPolicyNatRuleCollection" {
@@ -214,25 +216,40 @@ foreach ($policyInfo in $allFirewallPolicies) {
         }
     }
     
+    # Display debug information
+    Write-Host "    Summary for policy $($policy.Name):" -ForegroundColor Cyan
+    Write-Host "      Rule Collections: $($ruleCollections.Count)" -ForegroundColor White
+    Write-Host "      DNAT Rules: $($dnatRules.Count)" -ForegroundColor White
+    Write-Host "      Network Rules: $($networkRules.Count)" -ForegroundColor White
+    Write-Host "      Application Rules: $($applicationRules.Count)" -ForegroundColor White
+    
     # Export to Excel with multiple sheets
     if ($ruleCollections.Count -gt 0) {
         Write-Host "    Adding Rule Collections sheet ($($ruleCollections.Count) collections)" -ForegroundColor White
         $ruleCollections | Export-Excel -Path $excelPath -WorksheetName "Rule Collections" -AutoSize -AutoFilter -FreezeTopRow
+    } else {
+        Write-Host "    No Rule Collections found" -ForegroundColor Yellow
     }
     
     if ($dnatRules.Count -gt 0) {
         Write-Host "    Adding DNAT Rules sheet ($($dnatRules.Count) rules)" -ForegroundColor White
         $dnatRules | Export-Excel -Path $excelPath -WorksheetName "DNAT Rules" -AutoSize -AutoFilter -FreezeTopRow
+    } else {
+        Write-Host "    No DNAT Rules found" -ForegroundColor Yellow
     }
     
     if ($networkRules.Count -gt 0) {
         Write-Host "    Adding Network Rules sheet ($($networkRules.Count) rules)" -ForegroundColor White
         $networkRules | Export-Excel -Path $excelPath -WorksheetName "Network Rules" -AutoSize -AutoFilter -FreezeTopRow
+    } else {
+        Write-Host "    No Network Rules found" -ForegroundColor Yellow
     }
     
     if ($applicationRules.Count -gt 0) {
         Write-Host "    Adding Application Rules sheet ($($applicationRules.Count) rules)" -ForegroundColor White
         $applicationRules | Export-Excel -Path $excelPath -WorksheetName "Application Rules" -AutoSize -AutoFilter -FreezeTopRow
+    } else {
+        Write-Host "    No Application Rules found" -ForegroundColor Yellow
     }
     
     # If no rules found, create an info sheet
