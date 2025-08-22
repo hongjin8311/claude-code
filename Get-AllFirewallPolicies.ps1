@@ -50,7 +50,21 @@ foreach ($subscription in $subscriptions) {
     
     # Get all Firewall Policies in the subscription
     try {
-        $firewallPolicies = Get-AzFirewallPolicy
+        # Get all resource groups first, then get firewall policies from each
+        $resourceGroups = Get-AzResourceGroup
+        $firewallPolicies = @()
+        
+        foreach ($rg in $resourceGroups) {
+            try {
+                $rgPolicies = Get-AzFirewallPolicy -ResourceGroupName $rg.ResourceGroupName -ErrorAction SilentlyContinue
+                if ($rgPolicies) {
+                    $firewallPolicies += $rgPolicies
+                }
+            } catch {
+                # Ignore errors for resource groups without firewall policies
+            }
+        }
+        
         Write-Host "Found $($firewallPolicies.Count) Firewall Policies in subscription $($subscription.Name)" -ForegroundColor Yellow
         
         foreach ($policy in $firewallPolicies) {
