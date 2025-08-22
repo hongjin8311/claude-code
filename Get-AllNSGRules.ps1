@@ -55,13 +55,14 @@ foreach ($subscription in $subscriptions) {
                     RuleType = "Custom"
                     Priority = $rule.Priority
                     Direction = $rule.Direction
+                    RuleCategory = if ($rule.Direction -eq "Inbound") { "Inbound Security Rule" } else { "Outbound Security Rule" }
                     Access = $rule.Access
                     Protocol = $rule.Protocol
-                    SourcePortRange = ($rule.SourcePortRange -join ", ")
-                    DestinationPortRange = ($rule.DestinationPortRange -join ", ")
-                    SourceAddressPrefix = ($rule.SourceAddressPrefix -join ", ")
-                    DestinationAddressPrefix = ($rule.DestinationAddressPrefix -join ", ")
-                    Description = $rule.Description
+                    SourcePortRange = if ($rule.SourcePortRange) { ($rule.SourcePortRange -join ", ") } else { "N/A" }
+                    DestinationPortRange = if ($rule.DestinationPortRange) { ($rule.DestinationPortRange -join ", ") } else { "N/A" }
+                    SourceAddressPrefix = if ($rule.SourceAddressPrefix) { ($rule.SourceAddressPrefix -join ", ") } else { "N/A" }
+                    DestinationAddressPrefix = if ($rule.DestinationAddressPrefix) { ($rule.DestinationAddressPrefix -join ", ") } else { "N/A" }
+                    Description = if ($rule.Description) { $rule.Description } else { "No description" }
                 }
                 $allNsgRules += $ruleInfo
             }
@@ -77,13 +78,14 @@ foreach ($subscription in $subscriptions) {
                     RuleType = "Default"
                     Priority = $rule.Priority
                     Direction = $rule.Direction
+                    RuleCategory = if ($rule.Direction -eq "Inbound") { "Inbound Security Rule" } else { "Outbound Security Rule" }
                     Access = $rule.Access
                     Protocol = $rule.Protocol
-                    SourcePortRange = ($rule.SourcePortRange -join ", ")
-                    DestinationPortRange = ($rule.DestinationPortRange -join ", ")
-                    SourceAddressPrefix = ($rule.SourceAddressPrefix -join ", ")
-                    DestinationAddressPrefix = ($rule.DestinationAddressPrefix -join ", ")
-                    Description = $rule.Description
+                    SourcePortRange = if ($rule.SourcePortRange) { ($rule.SourcePortRange -join ", ") } else { "N/A" }
+                    DestinationPortRange = if ($rule.DestinationPortRange) { ($rule.DestinationPortRange -join ", ") } else { "N/A" }
+                    SourceAddressPrefix = if ($rule.SourceAddressPrefix) { ($rule.SourceAddressPrefix -join ", ") } else { "N/A" }
+                    DestinationAddressPrefix = if ($rule.DestinationAddressPrefix) { ($rule.DestinationAddressPrefix -join ", ") } else { "N/A" }
+                    Description = if ($rule.Description) { $rule.Description } else { "No description" }
                 }
                 $allNsgRules += $ruleInfo
             }
@@ -105,8 +107,19 @@ Write-Host "Results exported to: $csvPath" -ForegroundColor Green
 Write-Host "`nSummary by subscription:" -ForegroundColor Yellow
 $allNsgRules | Group-Object SubscriptionName | Select-Object Name, Count | Format-Table -AutoSize
 
+# Display summary by rule direction
+Write-Host "`nSummary by rule direction:" -ForegroundColor Yellow
+$allNsgRules | Group-Object RuleCategory | Select-Object Name, Count | Format-Table -AutoSize
+
+# Display summary by rule type
+Write-Host "`nSummary by rule type:" -ForegroundColor Yellow
+$allNsgRules | Group-Object RuleType | Select-Object Name, Count | Format-Table -AutoSize
+
 # Display the first 10 rules as sample
 if ($allNsgRules.Count -gt 0) {
     Write-Host "`nSample of first 10 rules:" -ForegroundColor Yellow
     $allNsgRules | Select-Object -First 10 | Format-Table -AutoSize
+    
+    Write-Host "`nInbound rules count: $(($allNsgRules | Where-Object {$_.Direction -eq 'Inbound'}).Count)" -ForegroundColor Cyan
+    Write-Host "Outbound rules count: $(($allNsgRules | Where-Object {$_.Direction -eq 'Outbound'}).Count)" -ForegroundColor Cyan
 }
