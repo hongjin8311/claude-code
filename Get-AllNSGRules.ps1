@@ -1,9 +1,14 @@
-# Get all NSG rules from all subscriptions
-# Requires Azure PowerShell module and proper authentication
+# Get all NSG rules from all subscriptions and export to Excel files
+# Requires Azure PowerShell module and ImportExcel module
 
-# Check if Azure PowerShell module is available
+# Check if required modules are available
 if (-not (Get-Module -ListAvailable -Name Az)) {
     Write-Error "Azure PowerShell module (Az) is not installed. Please install it using: Install-Module -Name Az"
+    exit 1
+}
+
+if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
+    Write-Error "ImportExcel module is not installed. Please install it using: Install-Module -Name ImportExcel"
     exit 1
 }
 
@@ -23,7 +28,7 @@ try {
 Write-Host "Getting all subscriptions..." -ForegroundColor Green
 $subscriptions = Get-AzSubscription
 
-$allNsgRules = @()
+$allNsgsByResourceGroup = @{}
 
 foreach ($subscription in $subscriptions) {
     Write-Host "Processing subscription: $($subscription.Name) ($($subscription.Id))" -ForegroundColor Cyan
@@ -44,82 +49,94 @@ foreach ($subscription in $subscriptions) {
         foreach ($nsg in $nsgs) {
             Write-Host "  Processing NSG: $($nsg.Name)" -ForegroundColor White
             
+            $nsgRules = @()
+            
             # Get security rules (custom rules)
             foreach ($rule in $nsg.SecurityRules) {
                 $ruleInfo = [PSCustomObject]@{
-                    SubscriptionName = $subscription.Name
-                    SubscriptionId = $subscription.Id
-                    ResourceGroupName = $nsg.ResourceGroupName
-                    NSGName = $nsg.Name
                     RuleName = $rule.Name
                     RuleType = "Custom"
                     Priority = $rule.Priority
                     Direction = $rule.Direction
-                    RuleCategory = if ($rule.Direction -eq "Inbound") { "Inbound Security Rule" } else { "Outbound Security Rule" }
                     Access = $rule.Access
                     Protocol = $rule.Protocol
-                    SourcePortRange = if ($rule.SourcePortRange) { ($rule.SourcePortRange -join ", ") } else { "N/A" }
-                    DestinationPortRange = if ($rule.DestinationPortRange) { ($rule.DestinationPortRange -join ", ") } else { "N/A" }
-                    SourceAddressPrefix = if ($rule.SourceAddressPrefix) { ($rule.SourceAddressPrefix -join ", ") } else { "N/A" }
-                    DestinationAddressPrefix = if ($rule.DestinationAddressPrefix) { ($rule.DestinationAddressPrefix -join ", ") } else { "N/A" }
-                    Description = if ($rule.Description) { $rule.Description } else { "No description" }
+                    SourcePortRange = if ($rule.SourcePortRange) { ($rule.SourcePortRange -join ", ") } else { "*" }
+                    DestinationPortRange = if ($rule.DestinationPortRange) { ($rule.DestinationPortRange -join ", ") } else { "*" }
+                    SourceAddressPrefix = if ($rule.SourceAddressPrefix) { ($rule.SourceAddressPrefix -join ", ") } else { "*" }
+                    DestinationAddressPrefix = if ($rule.DestinationAddressPrefix) { ($rule.DestinationAddressPrefix -join ", ") } else { "*" }
+                    Description = if ($rule.Description) { $rule.Description } else { "" }
                 }
-                $allNsgRules += $ruleInfo
+                $nsgRules += $ruleInfo
             }
             
             # Get default security rules
             foreach ($rule in $nsg.DefaultSecurityRules) {
                 $ruleInfo = [PSCustomObject]@{
-                    SubscriptionName = $subscription.Name
-                    SubscriptionId = $subscription.Id
-                    ResourceGroupName = $nsg.ResourceGroupName
-                    NSGName = $nsg.Name
                     RuleName = $rule.Name
                     RuleType = "Default"
                     Priority = $rule.Priority
                     Direction = $rule.Direction
-                    RuleCategory = if ($rule.Direction -eq "Inbound") { "Inbound Security Rule" } else { "Outbound Security Rule" }
                     Access = $rule.Access
                     Protocol = $rule.Protocol
-                    SourcePortRange = if ($rule.SourcePortRange) { ($rule.SourcePortRange -join ", ") } else { "N/A" }
-                    DestinationPortRange = if ($rule.DestinationPortRange) { ($rule.DestinationPortRange -join ", ") } else { "N/A" }
-                    SourceAddressPrefix = if ($rule.SourceAddressPrefix) { ($rule.SourceAddressPrefix -join ", ") } else { "N/A" }
-                    DestinationAddressPrefix = if ($rule.DestinationAddressPrefix) { ($rule.DestinationAddressPrefix -join ", ") } else { "N/A" }
-                    Description = if ($rule.Description) { $rule.Description } else { "No description" }
+                    SourcePortRange = if ($rule.SourcePortRange) { ($rule.SourcePortRange -join ", ") } else { "*" }
+                    DestinationPortRange = if ($rule.DestinationPortRange) { ($rule.DestinationPortRange -join ", ") } else { "*" }
+                    SourceAddressPrefix = if ($rule.SourceAddressPrefix) { ($rule.SourceAddressPrefix -join ", ") } else { "*" }
+                    DestinationAddressPrefix = if ($rule.DestinationAddressPrefix) { ($rule.DestinationAddressPrefix -join ", ") } else { "*" }
+                    Description = if ($rule.Description) { $rule.Description } else { "" }
                 }
-                $allNsgRules += $ruleInfo
+                $nsgRules += $ruleInfo
             }
+            
+            # Sort by Direction (Inbound first) then by Priority
+            $sortedRules = $nsgRules | Sort-Object @{Expression="Direction"; Descending=$false}, @{Expression="Priority"; Descending=$false}
+            
+            # Group by Resource Group
+            $resourceGroupName = $nsg.ResourceGroupName
+            if (-not $allNsgsByResourceGroup.ContainsKey($resourceGroupName)) {
+                $allNsgsByResourceGroup[$resourceGroupName] = @{}
+            }
+            $allNsgsByResourceGroup[$resourceGroupName][$nsg.Name] = $sortedRules
         }
     } catch {
         Write-Warning "Failed to get NSGs from subscription $($subscription.Name): $($_.Exception.Message)"
     }
 }
 
-# Display results
-Write-Host "`nTotal NSG rules found: $($allNsgRules.Count)" -ForegroundColor Green
+# Create Excel files by Resource Group
+Write-Host "`nCreating Excel files by Resource Group..." -ForegroundColor Green
 
-# Export to CSV
-$csvPath = "NSG_Rules_Report_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
-$allNsgRules | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
-Write-Host "Results exported to: $csvPath" -ForegroundColor Green
+$totalRulesCount = 0
+$filesCreated = 0
 
-# Display summary by subscription
-Write-Host "`nSummary by subscription:" -ForegroundColor Yellow
-$allNsgRules | Group-Object SubscriptionName | Select-Object Name, Count | Format-Table -AutoSize
-
-# Display summary by rule direction
-Write-Host "`nSummary by rule direction:" -ForegroundColor Yellow
-$allNsgRules | Group-Object RuleCategory | Select-Object Name, Count | Format-Table -AutoSize
-
-# Display summary by rule type
-Write-Host "`nSummary by rule type:" -ForegroundColor Yellow
-$allNsgRules | Group-Object RuleType | Select-Object Name, Count | Format-Table -AutoSize
-
-# Display the first 10 rules as sample
-if ($allNsgRules.Count -gt 0) {
-    Write-Host "`nSample of first 10 rules:" -ForegroundColor Yellow
-    $allNsgRules | Select-Object -First 10 | Format-Table -AutoSize
+foreach ($resourceGroupName in $allNsgsByResourceGroup.Keys) {
+    $excelPath = "NSG_Rules_$($resourceGroupName)_$(Get-Date -Format 'yyyyMMdd_HHmmss').xlsx"
     
-    Write-Host "`nInbound rules count: $(($allNsgRules | Where-Object {$_.Direction -eq 'Inbound'}).Count)" -ForegroundColor Cyan
-    Write-Host "Outbound rules count: $(($allNsgRules | Where-Object {$_.Direction -eq 'Outbound'}).Count)" -ForegroundColor Cyan
+    Write-Host "Creating Excel file: $excelPath" -ForegroundColor Yellow
+    
+    # Remove existing file if it exists
+    if (Test-Path $excelPath) {
+        Remove-Item $excelPath -Force
+    }
+    
+    foreach ($nsgName in $allNsgsByResourceGroup[$resourceGroupName].Keys) {
+        $nsgRules = $allNsgsByResourceGroup[$resourceGroupName][$nsgName]
+        
+        if ($nsgRules.Count -gt 0) {
+            Write-Host "  Adding worksheet: $nsgName ($($nsgRules.Count) rules)" -ForegroundColor White
+            
+            # Export to Excel with NSG name as worksheet
+            $nsgRules | Export-Excel -Path $excelPath -WorksheetName $nsgName -AutoSize -AutoFilter -FreezeTopRow
+            
+            $totalRulesCount += $nsgRules.Count
+        }
+    }
+    
+    $filesCreated++
+    Write-Host "Excel file created: $excelPath" -ForegroundColor Green
 }
+
+# Display summary
+Write-Host "`n=== SUMMARY ===" -ForegroundColor Cyan
+Write-Host "Total Excel files created: $filesCreated" -ForegroundColor Green
+Write-Host "Total NSG rules processed: $totalRulesCount" -ForegroundColor Green
+Write-Host "Files are sorted by: Direction (Inbound → Outbound) → Priority (Low → High)" -ForegroundColor Yellow
