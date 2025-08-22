@@ -122,7 +122,7 @@ foreach ($policyInfo in $allFirewallPolicies) {
                 Write-Host "    Processing Rule Collection Group: $ruleCollectionGroupName" -ForegroundColor White
                 
                 # Get the rule collection group details
-                $ruleCollectionGroup = Get-AzFirewallPolicyRuleCollectionGroup -Name $ruleCollectionGroupName -ResourceGroupName $rgName -FirewallPolicyName $policy.Name
+                $ruleCollectionGroup = Get-AzFirewallPolicyRuleCollectionGroup -Name $ruleCollectionGroupName -ResourceGroupName $rgName -AzureFirewallPolicyName $policy.Name
                 
                 # Process each rule collection in the group
                 foreach ($ruleCollection in $ruleCollectionGroup.Properties.RuleCollection) {
