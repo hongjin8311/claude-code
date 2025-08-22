@@ -123,10 +123,14 @@ foreach ($policyInfo in $allFirewallPolicies) {
         foreach ($ruleCollectionGroupRef in $policy.RuleCollectionGroups) {
             try {
                 # Extract resource group and name from the reference ID
-                $rgName = $policyInfo.ResourceGroupName
-                $ruleCollectionGroupName = ($ruleCollectionGroupRef.Id -split '/')[-1]
+                $idParts = $ruleCollectionGroupRef.Id -split '/'
+                $rgName = $idParts[4]  # Resource group is at index 4 in the ID path
+                $ruleCollectionGroupName = $idParts[-1]  # Rule collection group name is the last part
                 
-                Write-Host "    Processing Rule Collection Group: $ruleCollectionGroupName" -ForegroundColor White
+                Write-Host "    Processing Rule Collection Group: $ruleCollectionGroupName in RG: $rgName" -ForegroundColor White
+                
+                # Ensure we're in the correct subscription context
+                Set-AzContext -SubscriptionId $policyInfo.SubscriptionId | Out-Null
                 
                 # Get the rule collection group details
                 $ruleCollectionGroup = Get-AzFirewallPolicyRuleCollectionGroup -Name $ruleCollectionGroupName -ResourceGroupName $rgName -AzureFirewallPolicyName $policy.Name
