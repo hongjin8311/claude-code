@@ -3,8 +3,15 @@
 
 # Check if required modules are available
 if (-not (Get-Module -ListAvailable -Name Az)) {
-    Write-Error "Azure PowerShell module (Az) is not installed. Please install it using: Install-Module -Name Az"
-    exit 1
+    Write-Host "Azure PowerShell module (Az) is not installed. Installing..." -ForegroundColor Yellow
+    try {
+        Install-Module -Name Az -Force -Scope CurrentUser -AllowClobber
+        Write-Host "Azure PowerShell module installed successfully." -ForegroundColor Green
+    } catch {
+        Write-Error "Failed to install Azure PowerShell module: $($_.Exception.Message)"
+        Write-Host "Please install manually using: Install-Module -Name Az -Force" -ForegroundColor Red
+        exit 1
+    }
 }
 
 if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
