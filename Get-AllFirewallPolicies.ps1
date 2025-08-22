@@ -48,20 +48,18 @@ foreach ($subscription in $subscriptions) {
         continue
     }
     
-    # Get all Firewall Policies in the subscription
+    # Get all Firewall Policies in the subscription using Get-AzResource
     try {
-        # Get all resource groups first, then get firewall policies from each
-        $resourceGroups = Get-AzResourceGroup
+        # Use Get-AzResource to find all firewall policies
+        $firewallPolicyResources = Get-AzResource -ResourceType "Microsoft.Network/firewallPolicies"
         $firewallPolicies = @()
         
-        foreach ($rg in $resourceGroups) {
+        foreach ($policyResource in $firewallPolicyResources) {
             try {
-                $rgPolicies = Get-AzFirewallPolicy -ResourceGroupName $rg.ResourceGroupName -ErrorAction SilentlyContinue
-                if ($rgPolicies) {
-                    $firewallPolicies += $rgPolicies
-                }
+                $policy = Get-AzFirewallPolicy -Name $policyResource.Name -ResourceGroupName $policyResource.ResourceGroupName
+                $firewallPolicies += $policy
             } catch {
-                # Ignore errors for resource groups without firewall policies
+                Write-Warning "Failed to get details for policy $($policyResource.Name): $($_.Exception.Message)"
             }
         }
         
