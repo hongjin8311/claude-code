@@ -8,8 +8,15 @@ if (-not (Get-Module -ListAvailable -Name Az)) {
 }
 
 if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
-    Write-Error "ImportExcel module is not installed. Please install it using: Install-Module -Name ImportExcel"
-    exit 1
+    Write-Host "ImportExcel module is not installed. Installing..." -ForegroundColor Yellow
+    try {
+        Install-Module -Name ImportExcel -Force -Scope CurrentUser -AllowClobber
+        Write-Host "ImportExcel module installed successfully." -ForegroundColor Green
+    } catch {
+        Write-Error "Failed to install ImportExcel module: $($_.Exception.Message)"
+        Write-Host "Please install manually using: Install-Module -Name ImportExcel -Force" -ForegroundColor Red
+        exit 1
+    }
 }
 
 # Connect to Azure (if not already connected)
