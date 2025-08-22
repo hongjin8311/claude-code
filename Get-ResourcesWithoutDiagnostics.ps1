@@ -41,6 +41,9 @@ if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
 Import-Module Az
 Import-Module ImportExcel
 
+# Suppress Azure PowerShell breaking change warnings
+$env:SuppressAzurePowerShellBreakingChangeWarnings = "true"
+
 # Connect to Azure (if not already connected)
 try {
     $context = Get-AzContext
@@ -167,8 +170,8 @@ foreach ($subscription in $subscriptions) {
                 Write-Progress -Activity "Checking diagnostic settings" -Status "Processing $($resource.Name) ($processedResources/$totalResources)" -PercentComplete (($processedResources / $totalResources) * 100)
                 
                 # Add subscription info to resource object
-                $resource | Add-Member -NotePropertyName "SubscriptionName" -NotePropertyValue $subscription.Name
-                $resource | Add-Member -NotePropertyName "SubscriptionId" -NotePropertyValue $subscription.Id
+                $resource | Add-Member -NotePropertyName "SubscriptionName" -NotePropertyValue $subscription.Name -Force
+                $resource | Add-Member -NotePropertyName "SubscriptionId" -NotePropertyValue $subscription.Id -Force
                 
                 $diagnosticStatus = Get-ResourceDiagnosticStatus -Resource $resource
                 
