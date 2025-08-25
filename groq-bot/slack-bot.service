@@ -1,0 +1,18 @@
+[Unit]
+Description=Slack Groq AI Bot
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/azure
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node app.js
+Restart=on-failure
+RestartSec=10
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=slack-groq-bot
+
+[Install]
+WantedBy=multi-user.target
