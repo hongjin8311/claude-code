@@ -90,84 +90,12 @@
     });
   }
 
-  // 클릭 이벤트 감지
+  // 간단한 클릭 이벤트만 감지 (성능 최적화)
   document.addEventListener('click', function(event) {
     const target = event.target;
-    const tagName = target.tagName;
-    const id = target.id;
-    const className = target.className;
-    const onclick = target.onclick;
-    
-    if (onclick) {
-      logFunctionCall('click_handler', [tagName, id, className, onclick.toString()], 'user-click');
-    } else {
-      logFunctionCall('click_event', [tagName, id, className], 'user-click');
-    }
+    logFunctionCall('user_click', [target.tagName, target.id || 'no-id', target.className || 'no-class'], 'user-interaction');
   }, true);
 
-  // 폼 제출 감지
-  document.addEventListener('submit', function(event) {
-    const form = event.target;
-    const formData = new FormData(form);
-    const formValues = {};
-    for (let [key, value] of formData.entries()) {
-      formValues[key] = value;
-    }
-    logFunctionCall('form_submit', [form.id, form.className, formValues], 'user-submit');
-  }, true);
-
-  // 입력 변경 감지
-  document.addEventListener('change', function(event) {
-    const target = event.target;
-    if (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA') {
-      logFunctionCall('input_change', [target.tagName, target.name, target.id, target.value], 'user-input');
-    }
-  }, true);
-
-  // eval과 Function 생성자 감지
-  const originalEval = window.eval;
-  const originalFunction = window.Function;
-  
-  window.eval = function(code) {
-    logFunctionCall('eval', [code], 'eval');
-    return originalEval.call(this, code);
-  };
-  
-  window.Function = function(...args) {
-    logFunctionCall('Function_constructor', args, 'constructor');
-    return originalFunction.apply(this, args);
-  };
-
-  // 스크립트 태그를 통한 함수 정의 감지
-  const originalCreateElement = document.createElement;
-  document.createElement = function(tagName) {
-    const element = originalCreateElement.call(this, tagName);
-    
-    if (tagName.toLowerCase() === 'script') {
-      const originalSetAttribute = element.setAttribute;
-      element.setAttribute = function(name, value) {
-        if (name === 'src') {
-          logFunctionCall('script_src_set', [value], 'script-creation');
-        }
-        return originalSetAttribute.call(this, name, value);
-      };
-      
-      const originalTextContentSetter = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent').set;
-      Object.defineProperty(element, 'textContent', {
-        set: function(value) {
-          if (value && value.trim()) {
-            logFunctionCall('inline_script', [value.substring(0, 200) + '...'], 'script-creation');
-          }
-          return originalTextContentSetter.call(this, value);
-        },
-        get: Object.getOwnPropertyDescriptor(Node.prototype, 'textContent').get
-      });
-    }
-    
-    return element;
-  };
-
-  // DOM에 추가된 요소들의 이벤트 핸들러 감지
   const observer = new MutationObserver(mutations => {
     mutations.forEach(mutation => {
       if (mutation.type === 'childList') {
@@ -176,17 +104,6 @@
             if (node.tagName === 'SCRIPT' && node.src) {
               logFunctionCall('script_loaded', [node.src], 'DOM');
             }
-            
-            // 새로 추가된 요소의 onclick 핸들러 감지
-            if (node.onclick) {
-              logFunctionCall('new_element_handler', [node.tagName, node.id, node.onclick.toString()], 'DOM');
-            }
-            
-            // 자식 요소들의 핸들러도 확인
-            const elementsWithHandlers = node.querySelectorAll ? node.querySelectorAll('[onclick]') : [];
-            elementsWithHandlers.forEach(el => {
-              logFunctionCall('nested_element_handler', [el.tagName, el.id, el.onclick.toString()], 'DOM');
-            });
           }
         });
       }
@@ -196,13 +113,5 @@
   observer.observe(document, {
     childList: true,
     subtree: true
-  });
-
-  // 페이지 로드 후 기존 요소들의 핸들러 스캔
-  window.addEventListener('DOMContentLoaded', function() {
-    const elementsWithHandlers = document.querySelectorAll('[onclick]');
-    elementsWithHandlers.forEach(el => {
-      logFunctionCall('existing_element_handler', [el.tagName, el.id, el.onclick.toString()], 'DOM-scan');
-    });
   });
 })();
