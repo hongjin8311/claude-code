@@ -91,11 +91,59 @@ foreach ($subscription in $subscriptions) {
                 try {
                     $account = Get-AzCognitiveServicesAccount -ResourceGroupName $resource.ResourceGroupName -Name $resource.Name -ErrorAction SilentlyContinue
                     if ($account) {
-                        Write-Host "        Checking: $($account.AccountName) - Kind: $($account.Kind)" -ForegroundColor Gray
-                        # Check for OpenAI or AI Services (newer Azure AI Services)
+                        $kindInfo = if ($account.Kind) { $account.Kind } else { "Empty" }
+                        $endpointInfo = if ($account.Endpoint) { $account.Endpoint } else { "No endpoint" }
+                        Write-Host "        Checking: $($account.AccountName) - Kind: '$kindInfo' - Endpoint: $endpointInfo" -ForegroundColor Gray
+                        
+                        # Multiple ways to identify OpenAI resources
+                        $isOpenAI = $false
+                        
+                        # Method 1: Check Kind field
                         if ($account.Kind -eq "OpenAI" -or $account.Kind -eq "AIServices" -or $account.Kind -eq "CognitiveServices") {
+                            $isOpenAI = $true
+                            Write-Host "          → Identified by Kind: $($account.Kind)" -ForegroundColor Yellow
+                        }
+                        
+                        # Method 2: Check endpoint pattern (even if Kind is empty)
+                        if (-not $isOpenAI -and $account.Endpoint) {
+                            if ($account.Endpoint -like "*openai.azure.com*" -or $account.Endpoint -like "*cognitiveservices.azure.com*") {
+                                $isOpenAI = $true
+                                Write-Host "          → Identified by endpoint pattern: $($account.Endpoint)" -ForegroundColor Yellow
+                            }
+                        }
+                        
+                        # Method 3: Check resource name pattern
+                        if (-not $isOpenAI) {
+                            if ($account.AccountName -like "*openai*" -or $account.AccountName -like "*aoai*" -or $account.AccountName -like "*gpt*") {
+                                $isOpenAI = $true
+                                Write-Host "          → Identified by name pattern: $($account.AccountName)" -ForegroundColor Yellow
+                            }
+                        }
+                        
+                        # Method 4: Try to get deployments - if it has OpenAI deployments, it's an OpenAI resource
+                        if (-not $isOpenAI) {
+                            try {
+                                $testDeployments = Get-AzCognitiveServicesAccountDeployment -ResourceGroupName $account.ResourceGroupName -AccountName $account.AccountName -ErrorAction SilentlyContinue
+                                if ($testDeployments -and $testDeployments.Count -gt 0) {
+                                    # Check if any deployment has OpenAI models
+                                    foreach ($dep in $testDeployments) {
+                                        if ($dep.Properties.Model.Name -like "*gpt*" -or $dep.Properties.Model.Name -like "*text-*" -or $dep.Properties.Model.Name -like "*ada*" -or $dep.Properties.Model.Name -like "*davinci*") {
+                                            $isOpenAI = $true
+                                            Write-Host "          → Identified by deployment model: $($dep.Properties.Model.Name)" -ForegroundColor Yellow
+                                            break
+                                        }
+                                    }
+                                }
+                            } catch {
+                                # Ignore errors here
+                            }
+                        }
+                        
+                        if ($isOpenAI) {
                             $openAIResources += $account
-                            Write-Host "        ✓ Found: $($account.AccountName) (Kind: $($account.Kind))" -ForegroundColor Green
+                            Write-Host "        ✓ Added: $($account.AccountName) (Detection successful)" -ForegroundColor Green
+                        } else {
+                            Write-Host "        ✗ Skipped: $($account.AccountName) (Not identified as OpenAI)" -ForegroundColor Red
                         }
                     }
                 } catch {
@@ -113,10 +161,40 @@ foreach ($subscription in $subscriptions) {
             Write-Host "      Found $($allAccounts.Count) accounts via direct search" -ForegroundColor Gray
             
             foreach ($account in $allAccounts) {
-                Write-Host "        Checking: $($account.AccountName) - Kind: $($account.Kind)" -ForegroundColor Gray
-                if (($account.Kind -eq "OpenAI" -or $account.Kind -eq "AIServices" -or $account.Kind -eq "CognitiveServices") -and ($account -notin $openAIResources)) {
+                $kindInfo = if ($account.Kind) { $account.Kind } else { "Empty" }
+                Write-Host "        Checking: $($account.AccountName) - Kind: '$kindInfo'" -ForegroundColor Gray
+                
+                # Skip if already found
+                if ($account -in $openAIResources) {
+                    Write-Host "        → Already found, skipping" -ForegroundColor Gray
+                    continue
+                }
+                
+                # Use same detection logic as Method 1
+                $isOpenAI = $false
+                
+                # Check Kind field
+                if ($account.Kind -eq "OpenAI" -or $account.Kind -eq "AIServices" -or $account.Kind -eq "CognitiveServices") {
+                    $isOpenAI = $true
+                }
+                
+                # Check endpoint pattern
+                if (-not $isOpenAI -and $account.Endpoint) {
+                    if ($account.Endpoint -like "*openai.azure.com*" -or $account.Endpoint -like "*cognitiveservices.azure.com*") {
+                        $isOpenAI = $true
+                    }
+                }
+                
+                # Check name pattern
+                if (-not $isOpenAI) {
+                    if ($account.AccountName -like "*openai*" -or $account.AccountName -like "*aoai*" -or $account.AccountName -like "*gpt*") {
+                        $isOpenAI = $true
+                    }
+                }
+                
+                if ($isOpenAI) {
                     $openAIResources += $account
-                    Write-Host "        ✓ Added: $($account.AccountName) (Kind: $($account.Kind))" -ForegroundColor Green
+                    Write-Host "        ✓ Added: $($account.AccountName) (Method 2 detection)" -ForegroundColor Green
                 }
             }
         } catch {
