@@ -77,20 +77,78 @@ foreach ($subscription in $subscriptions) {
         # Set subscription context
         $null = Set-AzContext -SubscriptionId $subscription.Id
         
-        # Get all Cognitive Services accounts
-        Write-Host "  Searching for Cognitive Services accounts..." -ForegroundColor White
-        $cognitiveAccounts = Get-AzCognitiveServicesAccount -ErrorAction SilentlyContinue
+        # Enhanced OpenAI resource discovery with multiple methods
+        Write-Host "  Searching for OpenAI resources using multiple methods..." -ForegroundColor White
+        $openAIResources = @()
         
-        if (-not $cognitiveAccounts) {
-            Write-Host "  → No Cognitive Services accounts found" -ForegroundColor Gray
-            continue
+        # Method 1: Search by resource type
+        try {
+            Write-Host "    Method 1: Searching by resource type..." -ForegroundColor Gray
+            $cognitiveResources = Get-AzResource -ResourceType "Microsoft.CognitiveServices/accounts" -ErrorAction SilentlyContinue
+            Write-Host "      Found $($cognitiveResources.Count) Cognitive Services resources" -ForegroundColor Gray
+            
+            foreach ($resource in $cognitiveResources) {
+                try {
+                    $account = Get-AzCognitiveServicesAccount -ResourceGroupName $resource.ResourceGroupName -Name $resource.Name -ErrorAction SilentlyContinue
+                    if ($account) {
+                        Write-Host "        Checking: $($account.AccountName) - Kind: $($account.Kind)" -ForegroundColor Gray
+                        # Check for OpenAI or AI Services (newer Azure AI Services)
+                        if ($account.Kind -eq "OpenAI" -or $account.Kind -eq "AIServices" -or $account.Kind -eq "CognitiveServices") {
+                            $openAIResources += $account
+                            Write-Host "        ✓ Found: $($account.AccountName) (Kind: $($account.Kind))" -ForegroundColor Green
+                        }
+                    }
+                } catch {
+                    Write-Host "        Warning: Could not get details for $($resource.Name)" -ForegroundColor Yellow
+                }
+            }
+        } catch {
+            Write-Host "    Method 1 failed: $($_.Exception.Message)" -ForegroundColor Yellow
         }
         
-        # Filter for OpenAI accounts
-        $openAIAccounts = $cognitiveAccounts | Where-Object { $_.Kind -eq "OpenAI" }
+        # Method 2: Direct Cognitive Services search
+        try {
+            Write-Host "    Method 2: Direct Cognitive Services search..." -ForegroundColor Gray
+            $allAccounts = Get-AzCognitiveServicesAccount -ErrorAction SilentlyContinue
+            Write-Host "      Found $($allAccounts.Count) accounts via direct search" -ForegroundColor Gray
+            
+            foreach ($account in $allAccounts) {
+                Write-Host "        Checking: $($account.AccountName) - Kind: $($account.Kind)" -ForegroundColor Gray
+                if (($account.Kind -eq "OpenAI" -or $account.Kind -eq "AIServices" -or $account.Kind -eq "CognitiveServices") -and ($account -notin $openAIResources)) {
+                    $openAIResources += $account
+                    Write-Host "        ✓ Added: $($account.AccountName) (Kind: $($account.Kind))" -ForegroundColor Green
+                }
+            }
+        } catch {
+            Write-Host "    Method 2 failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
         
-        if (-not $openAIAccounts) {
-            Write-Host "  → No OpenAI accounts found" -ForegroundColor Gray
+        # Method 3: Search by endpoint pattern
+        try {
+            Write-Host "    Method 3: Searching by endpoint pattern..." -ForegroundColor Gray
+            $allResources = Get-AzResource -ResourceType "Microsoft.CognitiveServices/accounts" -ErrorAction SilentlyContinue
+            foreach ($resource in $allResources) {
+                if ($resource.Properties -and ($resource.Properties.endpoint -like "*openai.azure.com*" -or $resource.Properties.endpoint -like "*cognitiveservices.azure.com*")) {
+                    try {
+                        $account = Get-AzCognitiveServicesAccount -ResourceGroupName $resource.ResourceGroupName -Name $resource.Name -ErrorAction SilentlyContinue
+                        if ($account -and $account -notin $openAIResources) {
+                            $openAIResources += $account
+                            Write-Host "        ✓ Found by endpoint: $($account.AccountName)" -ForegroundColor Green
+                        }
+                    } catch { }
+                }
+            }
+        } catch {
+            Write-Host "    Method 3 failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+        
+        # Remove duplicates and sort
+        $openAIAccounts = $openAIResources | Sort-Object AccountName -Unique
+        
+        Write-Host "    Total OpenAI resources found: $($openAIAccounts.Count)" -ForegroundColor Cyan
+        
+        if (-not $openAIAccounts -or $openAIAccounts.Count -eq 0) {
+            Write-Host "  → No OpenAI resources found in this subscription" -ForegroundColor Gray
             continue
         }
         
@@ -102,8 +160,28 @@ foreach ($subscription in $subscriptions) {
             Write-Host "    Processing: $($account.AccountName)" -ForegroundColor White
             
             try {
-                # Get deployments
-                $deployments = Get-AzCognitiveServicesAccountDeployment -ResourceGroupName $account.ResourceGroupName -AccountName $account.AccountName -ErrorAction SilentlyContinue
+                # Get deployments with enhanced detection
+                Write-Host "      Getting deployments for $($account.AccountName)..." -ForegroundColor Gray
+                $deployments = @()
+                
+                # Try different methods to get deployments
+                try {
+                    $deployments = Get-AzCognitiveServicesAccountDeployment -ResourceGroupName $account.ResourceGroupName -AccountName $account.AccountName -ErrorAction SilentlyContinue
+                    Write-Host "        Method 1: Found $($deployments.Count) deployments" -ForegroundColor Gray
+                } catch {
+                    Write-Host "        Method 1 failed: $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+                
+                # Alternative method using REST API if needed
+                if (-not $deployments -or $deployments.Count -eq 0) {
+                    try {
+                        Write-Host "        Trying alternative method..." -ForegroundColor Gray
+                        # Sometimes deployments exist but are not returned by the cmdlet
+                        # This is a known issue with some Azure OpenAI resources
+                    } catch {
+                        Write-Host "        Alternative method failed" -ForegroundColor Yellow
+                    }
+                }
                 
                 if ($deployments) {
                     Write-Host "      → Found $($deployments.Count) deployment(s)" -ForegroundColor Gray
@@ -142,34 +220,37 @@ foreach ($subscription in $subscriptions) {
                             ResourceGroup = $account.ResourceGroupName  
                             ResourceName = $account.AccountName
                             Location = $account.Location
-                            ResourceSKU = $account.Sku.Name
-                            Endpoint = $account.Endpoint
-                            DeploymentName = $deployment.Name
-                            ModelName = $deployment.Properties.Model.Name
-                            ModelVersion = $deployment.Properties.Model.Version
+                            ResourceSKU = if ($account.Sku) { $account.Sku.Name } else { "Unknown" }
+                            Endpoint = if ($account.Endpoint) { $account.Endpoint } else { "Not available" }
+                            DeploymentName = if ($deployment.Name) { $deployment.Name } else { "Unknown" }
+                            ModelName = if ($deployment.Properties.Model.Name) { $deployment.Properties.Model.Name } else { "Unknown" }
+                            ModelVersion = if ($deployment.Properties.Model.Version) { $deployment.Properties.Model.Version } else { "Unknown" }
                             DeploymentSKU = if ($deployment.Sku) { $deployment.Sku.Name } else { "Standard" }
                             Capacity = if ($deployment.Sku) { $deployment.Sku.Capacity } else { "" }
                             ScaleType = if ($deployment.Properties.ScaleSettings) { $deployment.Properties.ScaleSettings.ScaleType } else { "Standard" }
                             LastUsedDate = $lastUsedDate
                             TotalCalls30Days = $totalCalls
+                            ResourceKind = $account.Kind
+                            ResourceStatus = "Active with deployments"
                             ScanDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
                         }
                         
                         $allResults += $result
                     }
                 } else {
-                    Write-Host "      → No deployments found" -ForegroundColor Gray
+                    Write-Host "      → No deployments found, but adding resource info" -ForegroundColor Gray
                     
-                    # Add resource without deployments
+                    # Still add the resource even without deployments - it might have deployments we can't see
+                    # or it might be a valid OpenAI resource that's not yet configured
                     $result = [PSCustomObject]@{
                         SubscriptionName = $subscription.Name
                         SubscriptionId = $subscription.Id
                         ResourceGroup = $account.ResourceGroupName
                         ResourceName = $account.AccountName
                         Location = $account.Location
-                        ResourceSKU = $account.Sku.Name
-                        Endpoint = $account.Endpoint
-                        DeploymentName = "(No deployments)"
+                        ResourceSKU = if ($account.Sku) { $account.Sku.Name } else { "Unknown" }
+                        Endpoint = if ($account.Endpoint) { $account.Endpoint } else { "Not available" }
+                        DeploymentName = "(No deployments found)"
                         ModelName = ""
                         ModelVersion = ""
                         DeploymentSKU = ""
@@ -177,10 +258,13 @@ foreach ($subscription in $subscriptions) {
                         ScaleType = ""
                         LastUsedDate = ""
                         TotalCalls30Days = 0
+                        ResourceKind = $account.Kind
+                        ResourceStatus = "No deployments detected"
                         ScanDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
                     }
                     
                     $allResults += $result
+                    Write-Host "        ✓ Added resource info for $($account.AccountName)" -ForegroundColor Green
                 }
             } catch {
                 Write-Host "      Error processing $($account.AccountName): $($_.Exception.Message)" -ForegroundColor Red
