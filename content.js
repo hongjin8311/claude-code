@@ -1,147 +1,111 @@
 (function() {
-  const originalFunctions = new Map();
-  let isMonitoring = true;
-  
-  function serializeArgument(arg, maxDepth = 1, currentDepth = 0) {
-    if (currentDepth > maxDepth) return '[Max Depth]';
-    
-    try {
-      if (arg === null) return 'null';
-      if (arg === undefined) return 'undefined';
-      if (typeof arg === 'function') return `[Function: ${arg.name || 'anonymous'}]`;
-      if (typeof arg === 'symbol') return arg.toString();
-      if (arg instanceof Error) return `[Error: ${arg.message}]`;
-      if (arg instanceof Date) return `[Date: ${arg.toISOString()}]`;
-      if (arg instanceof RegExp) return `[RegExp: ${arg.toString()}]`;
-      
-      if (typeof arg === 'object') {
-        if (arg === window) return '[Window]';
-        if (arg === document) return '[Document]';
-        if (arg.nodeType) return `[Element: ${arg.nodeName}]`;
-        
-        if (Array.isArray(arg)) {
-          return arg.length > 5 ? `[Array(${arg.length})]` : `[Array: ${arg.slice(0, 3).join(', ')}]`;
-        }
-        
-        const keys = Object.keys(arg);
-        if (keys.length > 3) {
-          return `[Object: {${keys.slice(0, 2).join(', ')}...}]`;
-        }
-        return `[Object: {${keys.join(', ')}}]`;
-      }
-      
-      return typeof arg === 'string' && arg.length > 50 ? 
-             `"${arg.substring(0, 50)}..."` : 
-             String(arg);
-    } catch (e) {
-      return '[Error]';
-    }
-  }
+  const originalApply = Function.prototype.apply;
+  const originalCall = Function.prototype.call;
   
   function logFunctionCall(functionName, args, source) {
-    if (!isMonitoring) return;
+    const callData = {
+      functionName: functionName,
+      arguments: Array.from(args).map(arg => {
+        try {
+          if (typeof arg === 'function') {
+            return `[Function: ${arg.name || 'anonymous'}]`;
+          }
+          if (typeof arg === 'object') {
+            if (arg === null) return 'null';
+            if (arg === window) return '[Window]';
+            if (arg === document) return '[Document]';
+            return JSON.stringify(arg, null, 2);
+          }
+          return String(arg);
+        } catch (e) {
+          return '[Circular Reference]';
+        }
+      }),
+      timestamp: new Date().toISOString(),
+      url: window.location.href,
+      source: source
+    };
     
-    try {
-      if (functionName.includes('chrome') || functionName.includes('extension')) return;
-      
-      const callData = {
-        functionName: functionName,
-        arguments: Array.from(args || []).slice(0, 5).map(arg => serializeArgument(arg)),
-        timestamp: new Date().toISOString(),
-        url: window.location.href,
-        source: source
-      };
-      
-      setTimeout(() => {
-        chrome.runtime.sendMessage({
-          type: 'FUNCTION_CALL',
-          data: callData
-        }).catch(() => {});
-      }, 0);
-    } catch (e) {}
+    chrome.runtime.sendMessage({
+      type: 'FUNCTION_CALL',
+      data: callData
+    });
   }
 
-  function safeHook(original, name, source) {
-    if (!original || typeof original !== 'function') return original;
-    
-    return function(...args) {
-      try {
-        logFunctionCall(name, args, source);
-      } catch (e) {}
-      return original.apply(this, args);
+  Function.prototype.apply = function(thisArg, args) {
+    const funcName = this.name || 'anonymous';
+    logFunctionCall(funcName, args || [], 'apply');
+    return originalApply.call(this, thisArg, args);
+  };
+
+  Function.prototype.call = function(thisArg, ...args) {
+    const funcName = this.name || 'anonymous';
+    logFunctionCall(funcName, args, 'call');
+    return originalCall.apply(this, [thisArg, ...args]);
+  };
+
+  const originalSetTimeout = window.setTimeout;
+  const originalSetInterval = window.setInterval;
+  const originalAddEventListener = window.addEventListener;
+
+  window.setTimeout = function(callback, delay, ...args) {
+    const callbackName = callback.name || 'anonymous_timeout_callback';
+    logFunctionCall('setTimeout', [callbackName, delay, ...args], 'setTimeout');
+    return originalSetTimeout.apply(this, arguments);
+  };
+
+  window.setInterval = function(callback, delay, ...args) {
+    const callbackName = callback.name || 'anonymous_interval_callback';
+    logFunctionCall('setInterval', [callbackName, delay, ...args], 'setInterval');
+    return originalSetInterval.apply(this, arguments);
+  };
+
+  window.addEventListener = function(type, listener, options) {
+    const listenerName = listener.name || 'anonymous_listener';
+    logFunctionCall('addEventListener', [type, listenerName, options], 'addEventListener');
+    return originalAddEventListener.apply(this, arguments);
+  };
+
+  const originalFetch = window.fetch;
+  if (originalFetch) {
+    window.fetch = function(...args) {
+      logFunctionCall('fetch', args, 'fetch');
+      return originalFetch.apply(this, args);
     };
   }
 
-  function hookSelectiveFunctions() {
-    const safeFunctions = ['setTimeout', 'setInterval', 'fetch', 'alert', 'confirm'];
-    
-    safeFunctions.forEach(funcName => {
-      if (window[funcName] && typeof window[funcName] === 'function') {
-        const original = window[funcName];
-        originalFunctions.set(funcName, original);
-        window[funcName] = safeHook(original, funcName, 'global');
-      }
-    });
-  }
-
-  function hookConsoleMethods() {
-    if (typeof console !== 'undefined') {
-      ['log', 'warn', 'error'].forEach(method => {
-        if (console[method] && typeof console[method] === 'function') {
-          const original = console[method];
-          originalFunctions.set(`console.${method}`, original);
-          console[method] = safeHook(original, method, 'console');
-        }
-      });
+  const hookMethod = (obj, methodName) => {
+    if (obj && obj[methodName] && typeof obj[methodName] === 'function') {
+      const original = obj[methodName];
+      obj[methodName] = function(...args) {
+        logFunctionCall(methodName, args, `${obj.constructor.name}.${methodName}`);
+        return original.apply(this, args);
+      };
     }
-  }
-
-  function observeUserInteractions() {
-    const events = ['click', 'submit', 'change'];
-    
-    events.forEach(eventType => {
-      document.addEventListener(eventType, (e) => {
-        logFunctionCall(`${eventType}_event`, [e.target.tagName, e.target.id || e.target.className], 'user-interaction');
-      }, true);
-    });
-  }
-
-  function observeScripts() {
-    const observer = new MutationObserver(mutations => {
-      mutations.forEach(mutation => {
-        if (mutation.type === 'childList') {
-          mutation.addedNodes.forEach(node => {
-            if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'SCRIPT' && node.src) {
-              logFunctionCall('script_loaded', [node.src], 'DOM');
-            }
-          });
-        }
-      });
-    });
-
-    observer.observe(document, {
-      childList: true,
-      subtree: true
-    });
-  }
-
-  window.addEventListener('beforeunload', () => {
-    logFunctionCall('page_unload', [window.location.href], 'navigation');
-  });
-
-  window.addEventListener('DOMContentLoaded', () => {
-    logFunctionCall('dom_loaded', [window.location.href], 'navigation');
-  });
-
-  hookSelectiveFunctions();
-  hookConsoleMethods();
-  observeUserInteractions();
-  observeScripts();
-
-  window.toggleMonitoring = () => {
-    isMonitoring = !isMonitoring;
-    console.log('Function monitoring:', isMonitoring ? 'enabled' : 'disabled');
   };
 
-  console.log('Function Call Monitor: Safe monitoring active');
+  if (typeof console !== 'undefined') {
+    ['log', 'warn', 'error', 'info', 'debug'].forEach(method => {
+      hookMethod(console, method);
+    });
+  }
+
+  const observer = new MutationObserver(mutations => {
+    mutations.forEach(mutation => {
+      if (mutation.type === 'childList') {
+        mutation.addedNodes.forEach(node => {
+          if (node.nodeType === Node.ELEMENT_NODE) {
+            if (node.tagName === 'SCRIPT' && node.src) {
+              logFunctionCall('script_loaded', [node.src], 'DOM');
+            }
+          }
+        });
+      }
+    });
+  });
+
+  observer.observe(document, {
+    childList: true,
+    subtree: true
+  });
 })();
