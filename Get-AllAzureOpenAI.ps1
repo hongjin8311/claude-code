@@ -1,10 +1,9 @@
-# Get all Azure OpenAI resources from all subscriptions with PTU metrics and export to Excel
+# Get all Azure OpenAI resources from all subscriptions with deployment last used dates and export to Excel
 # Requires Azure PowerShell module and ImportExcel module
 
 param(
     [string]$OutputFile = "AzureOpenAI_Report_$(Get-Date -Format 'yyyyMMdd_HHmmss').xlsx",
-    [switch]$SkipPTUMetrics,
-    [int]$MetricsDays = 7
+    [int]$MetricsDays = 30
 )
 
 # Check if required modules are available
@@ -23,7 +22,7 @@ if (-not (Get-Module -ListAvailable -Name Az)) {
 if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
     Write-Host "ImportExcel module is not installed. Installing..." -ForegroundColor Yellow
     try {
-        Install-Module -Name ImportExcel -Force -Scope CurrentUser -AllowClobber
+        Install-Module -Name ImportExcel -Force -Scope CurrentUser
         Write-Host "ImportExcel module installed successfully." -ForegroundColor Green
     } catch {
         Write-Error "Failed to install ImportExcel module: $($_.Exception.Message)"
@@ -55,15 +54,8 @@ function Get-PTUMetrics {
         [string]$ResourceGroupName,
         [string]$AccountName,
         [string]$DeploymentName,
-        [int]$Days = 7
+        [int]$Days = 30
     )
-    
-    if ($SkipPTUMetrics) {
-        return @{
-            PTUAvg7Days = 0
-            PTUMax7Days = 0
-        }
-    }
     
     try {
         # Set subscription context
@@ -73,38 +65,57 @@ function Get-PTUMetrics {
         $endTime = Get-Date
         $startTime = $endTime.AddDays(-$Days)
         
-        # Get PTU utilization metrics
+        # Get resource ID for the specific deployment
         $resourceId = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.CognitiveServices/accounts/$AccountName"
         
-        $metrics = Get-AzMetric -ResourceId $resourceId -MetricName "ProvisionedManagedThroughputUtilization" -StartTime $startTime -EndTime $endTime -TimeGrain "01:00:00" -AggregationType Average,Maximum -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        $ptuAvg7Days = 0
+        $ptuMax7Days = 0
+        $lastUsedDate = ""
         
-        $avgValues = @()
-        $maxValues = @()
+        # Try to get PTU utilization metrics
+        try {
+            $ptuMetrics = Get-AzMetric -ResourceId $resourceId -MetricName "ProvisionedThroughputUtilization" -StartTime $startTime -EndTime $endTime -TimeGrain "01:00:00" -AggregationType Average -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            
+            if ($ptuMetrics -and $ptuMetrics.Data) {
+                $validDataPoints = $ptuMetrics.Data | Where-Object { $_.Average -ne $null -and $_.Average -gt 0 }
+                if ($validDataPoints) {
+                    $ptuAvg7Days = ($validDataPoints | Measure-Object -Property Average -Average).Average
+                    $ptuMax7Days = ($validDataPoints | Measure-Object -Property Average -Maximum).Maximum
+                    $lastUsedDate = ($validDataPoints | Sort-Object TimeStamp -Descending)[0].TimeStamp.ToString("yyyy-MM-dd HH:mm:ss")
+                }
+            }
+        } catch {
+            Write-Verbose "PTU metrics not available for $DeploymentName"
+        }
         
-        if ($metrics -and $metrics.Data) {
-            foreach ($dataPoint in $metrics.Data) {
-                if ($dataPoint.Average -ne $null) {
-                    $avgValues += $dataPoint.Average
+        # If no PTU metrics, try to get general usage metrics
+        if ($lastUsedDate -eq "") {
+            try {
+                $callMetrics = Get-AzMetric -ResourceId $resourceId -MetricName "TotalCalls" -StartTime $startTime -EndTime $endTime -TimeGrain "01:00:00" -AggregationType Total -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+                
+                if ($callMetrics -and $callMetrics.Data) {
+                    $nonZeroDataPoints = $callMetrics.Data | Where-Object { $_.Total -gt 0 } | Sort-Object TimeStamp -Descending
+                    if ($nonZeroDataPoints) {
+                        $lastUsedDate = $nonZeroDataPoints[0].TimeStamp.ToString("yyyy-MM-dd HH:mm:ss")
+                    }
                 }
-                if ($dataPoint.Maximum -ne $null) {
-                    $maxValues += $dataPoint.Maximum
-                }
+            } catch {
+                Write-Verbose "Call metrics not available for $DeploymentName"
             }
         }
         
-        $avgPTU = if ($avgValues.Count -gt 0) { ($avgValues | Measure-Object -Average).Average } else { 0 }
-        $maxPTU = if ($maxValues.Count -gt 0) { ($maxValues | Measure-Object -Maximum).Maximum } else { 0 }
-        
         return @{
-            PTUAvg7Days = [math]::Round($avgPTU, 2)
-            PTUMax7Days = [math]::Round($maxPTU, 2)
+            PTUAvg7Days = [math]::Round($ptuAvg7Days, 2)
+            PTUMax7Days = [math]::Round($ptuMax7Days, 2)
+            LastUsedDate = $lastUsedDate
         }
     }
     catch {
-        Write-Warning "Failed to get PTU metrics for deployment $DeploymentName in $AccountName : $($_.Exception.Message)"
+        Write-Warning "Failed to get metrics for deployment $DeploymentName in $AccountName : $($_.Exception.Message)"
         return @{
             PTUAvg7Days = 0
             PTUMax7Days = 0
+            LastUsedDate = ""
         }
     }
 }
@@ -160,6 +171,7 @@ foreach ($subscription in $subscriptions) {
                             ScaleType = $deployment.Properties.ScaleSettings.ScaleType
                             PTUAvg7Days = $ptuMetrics.PTUAvg7Days
                             PTUMax7Days = $ptuMetrics.PTUMax7Days
+                            LastUsedDate = $ptuMetrics.LastUsedDate
                             ScanDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
                         }
                         
@@ -189,6 +201,7 @@ foreach ($subscription in $subscriptions) {
                         ScaleType = ""
                         PTUAvg7Days = 0
                         PTUMax7Days = 0
+                        LastUsedDate = ""
                         ScanDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
                     }
                     
@@ -224,16 +237,14 @@ $deploymentsWithModels = $allOpenAIResources | Where-Object { $_.DeploymentName 
 Write-Host "Total Deployments: $($deploymentsWithModels.Count)" -ForegroundColor White
 
 # PTU Statistics
-if (-not $SkipPTUMetrics) {
-    $deploymentsWithPTU = $deploymentsWithModels | Where-Object { $_.PTUAvg7Days -gt 0 }
-    if ($deploymentsWithPTU.Count -gt 0) {
-        $avgPTU = ($deploymentsWithPTU | Measure-Object -Property PTUAvg7Days -Average).Average
-        $maxPTU = ($deploymentsWithPTU | Measure-Object -Property PTUMax7Days -Maximum).Maximum
-        Write-Host "PTU Usage Summary (Last $MetricsDays Days):" -ForegroundColor Yellow
-        Write-Host "  Average PTU Usage: $([math]::Round($avgPTU, 2))%" -ForegroundColor White
-        Write-Host "  Highest PTU Usage: $([math]::Round($maxPTU, 2))%" -ForegroundColor White
-        Write-Host "  Deployments with PTU data: $($deploymentsWithPTU.Count)" -ForegroundColor White
-    }
+$deploymentsWithPTU = $deploymentsWithModels | Where-Object { $_.PTUAvg7Days -gt 0 }
+if ($deploymentsWithPTU.Count -gt 0) {
+    $avgPTU = ($deploymentsWithPTU | Measure-Object -Property PTUAvg7Days -Average).Average
+    $maxPTU = ($deploymentsWithPTU | Measure-Object -Property PTUMax7Days -Maximum).Maximum
+    Write-Host "PTU Usage Summary (Last $MetricsDays Days):" -ForegroundColor Yellow
+    Write-Host "  Average PTU Usage: $([math]::Round($avgPTU, 2))%" -ForegroundColor White
+    Write-Host "  Highest PTU Usage: $([math]::Round($maxPTU, 2))%" -ForegroundColor White
+    Write-Host "  Deployments with PTU data: $($deploymentsWithPTU.Count)" -ForegroundColor White
 }
 
 # Group by location
@@ -300,8 +311,6 @@ Write-Host "  - Summary sheet with resource group statistics" -ForegroundColor W
 Write-Host "  - Individual sheets for each resource group" -ForegroundColor White
 Write-Host "  - Complete data sheet with all resources" -ForegroundColor White
 
-if (-not $SkipPTUMetrics) {
-    Write-Host "  - PTU usage metrics for the last $MetricsDays days" -ForegroundColor White
-}
+Write-Host "  - PTU usage metrics and last used dates for the last $MetricsDays days" -ForegroundColor White
 
 Write-Host "`nScan completed successfully!" -ForegroundColor Green
