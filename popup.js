@@ -21,17 +21,23 @@ document.addEventListener('DOMContentLoaded', function() {
       return;
     }
 
-    const html = calls.slice(-50).reverse().map(call => `
-      <div class="call-item">
-        <div class="call-name">${call.functionName || 'anonymous'}</div>
-        <div class="call-args">${formatArguments(call.arguments)}</div>
-        <div class="call-meta">
-          ${new Date(call.timestamp).toLocaleString()} | 
-          ${call.source} | 
-          ${call.url ? new URL(call.url).hostname : 'unknown'}
+    const html = calls.slice(-100).reverse().map(call => {
+      const contextInfo = call.context ? ` (${call.context})` : '';
+      const functionDisplay = `${call.functionName || 'anonymous'}${contextInfo}`;
+      const argsCount = call.arguments ? call.arguments.length : 0;
+      
+      return `
+        <div class="call-item">
+          <div class="call-name">${functionDisplay} <span style="color: #666; font-size: 0.8em;">[${argsCount} args]</span></div>
+          <div class="call-args">${formatArguments(call.arguments)}</div>
+          <div class="call-meta">
+            ${new Date(call.timestamp).toLocaleString()} | 
+            ${call.source} | 
+            ${call.url ? new URL(call.url).hostname : 'unknown'}
+          </div>
         </div>
-      </div>
-    `).join('');
+      `;
+    }).join('');
 
     callList.innerHTML = html;
   }
